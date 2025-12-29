@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFT Butterfly Visualizer - Cooley-Tukey</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        h1 { color: #333; }
+        
+        /* Controls Section */
+        .controls {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        input[type="text"] {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 250px;
+        }
+        button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .btn-load { background-color: #2196F3; color: white; }
+        .btn-step { background-color: #4CAF50; color: white; }
+        .btn-reset { background-color: #f44336; color: white; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        /* Visualization Area */
+        .status-bar {
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #555;
+        }
+        .array-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            overflow-x: auto;
+        }
+        .box {
+            width: 80px;
+            height: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+            position: relative;
+        }
+        .box .index {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            font-size: 10px;
+            color: #999;
+        }
+        .box .val { font-weight: bold; }
+        
+        /* Highlighting Classes */
+        .active-u {
+            border-color: #2196F3;
+            background-color: #E3F2FD;
+            transform: scale(1.05);
+        }
+        .active-v {
+            border-color: #FF9800;
+            background-color: #FFF3E0;
+            transform: scale(1.05);
+        }
+        .just-updated {
+            animation: flash 1s;
+        }
+
+        @keyframes flash {
+            0% { background-color: #4CAF50; color: white; }
+            100% { background-color: white; color: black; }
+        }
+
+        /* Log Console */
+        .console {
+            background: #222;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 8px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>FFT Butterfly Visualizer</h1>
+    <p>Mô phỏng thuật toán Iterative Cooley-Tukey FFT (C++ Chapter 4 implementation)</p>
+
+    <div class="controls">
+        <label>Input (cách nhau dấu phẩy): </label>
+        <input type="text" id="inputData" value="0, 1, 2, 3">
+        <button class="btn-load" onclick="loadData()">Load & Bit-Reverse</button>
+        <button class="btn-step" id="btnStep" onclick="nextStep()" disabled>Step</button>
+        <button class="btn-reset" onclick="reset()">Reset</button>
+    </div>
+
+    <div class="status-bar" id="statusBar">Sẵn sàng. Nhấn 'Load' để bắt đầu.</div>
+
+    <div class="array-container" id="visualizer">
+        </div>
+
+    <div class="console" id="consoleLog">
+        > Waiting for input...
+    </div>
+
+    <script>
+        class Complex {
+            constructor(r, i = 0) { this.r = r; this.i = i; }
+            add(c) { return new Complex(this.r + c.r, this.i + c.i); }
+            sub(c) { return new Complex(this.r - c.r, this.i - c.i); }
+            mul(c) { 
+                return new Complex(
+                    this.r * c.r - this.i * c.i, 
+                    this.r * c.i + this.i * c.r
+                ); 
+            }
+            toString() {
+                let r = Math.round(this.r * 100) / 100;
+                let i = Math.round(this.i * 100) / 100;
+                if (i >= 0) return `${r} + ${i}i`;
+                return `${r} - ${Math.abs(i)}i`;
+            }
+        }
+
+        let data = [];
+        let n = 0;
+        let len = 2, i = 0, j = 0;
+        let isRunning = false;
+
+        function log(msg) {
+            const c = document.getElementById('consoleLog');
+            c.innerHTML += `<div>> ${msg}</div>`;
+            c.scrollTop = c.scrollHeight;
+        }
+
+        function render() {
+            const container = document.getElementById('visualizer');
+            container.innerHTML = '';
+            data.forEach((val, idx) => {
+                const div = document.createElement('div');
+                div.className = 'box';
+                div.id = `box-${idx}`;
+                div.innerHTML = `<span class="index">${idx}</span><span class="val">${val.toString()}</span>`;
+                container.appendChild(div);
+            });
+        }
+
+        function highlight(idxU, idxV) {
+            document.querySelectorAll('.box').forEach(b => b.className = 'box');
+            if (idxU !== null) document.getElementById(`box-${idxU}`).classList.add('active-u');
+            if (idxV !== null) document.getElementById(`box-${idxV}`).classList.add('active-v');
+        }
+
+        function flashUpdate(idxU, idxV) {
+             document.getElementById(`box-${idxU}`).classList.add('just-updated');
+             document.getElementById(`box-${idxV}`).classList.add('just-updated');
+        }
+
+        function bitReverse(arr) {
+            let size = arr.length;
+            let newArr = [...arr];
+            for (let i = 1, j = 0; i < size; i++) {
+                let bit = size >> 1;
+                for (; j & bit; bit >>= 1) j ^= bit;
+                j ^= bit;
+                if (i < j) {
+                    [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+                }
+            }
+            return newArr;
+        }
+
+        function loadData() {
+            const inputStr = document.getElementById('inputData').value;
+            const raw = inputStr.split(',').map(Number);
+            
+            n = 1;
+            while (n < raw.length) n <<= 1;
+            
+            data = [];
+            for(let k=0; k<n; k++) {
+                data.push(new Complex(raw[k] || 0));
+            }
+
+            data = bitReverse(data);
+            
+            render();
+            log(`Đã load input. Kích thước N=${n}.`);
+            log(`Đã thực hiện Đảo bit (Bit-Reversal). Sẵn sàng tính toán.`);
+            
+            len = 2; i = 0; j = 0;
+            isRunning = true;
+            document.getElementById('btnStep').disabled = false;
+            document.getElementById('statusBar').innerText = `Sẵn sàng: Stage 1 (Block size = 2)`;
+        }
+
+        function nextStep() {
+            if (!isRunning) return;
+            
+            let ang = 2 * Math.PI / len;
+            let wlen = new Complex(Math.cos(ang), Math.sin(ang));
+            let w = new Complex(1, 0);
+            
+            for(let k=0; k<j; k++) w = w.mul(wlen);
+
+            let idxU = i + j;
+            let idxV = i + j + len/2;
+
+            highlight(idxU, idxV);
+            document.getElementById('statusBar').innerText = `Đang tính: Block size ${len}, Cặp (${idxU}, ${idxV})`;
+
+            let u = data[idxU];
+            let v = data[idxV].mul(w);
+
+            let newU = u.add(v);
+            let newV = u.sub(v);
+
+            data[idxU] = newU;
+            data[idxV] = newV;
+
+            log(`Butterfly: A[${idxU}] & A[${idxV}] | w=(${w.toString()})`);
+
+            render();
+            flashUpdate(idxU, idxV);
+            highlight(idxU, idxV);
+
+            j++;
+            if (j >= len / 2) {
+                j = 0;
+                i += len;
+                if (i >= n) {
+                    i = 0;
+                    len <<= 1;
+                    log(`--- Hoàn thành tầng ${len/2}. Chuyển sang kích thước khối ${len} ---`);
+                }
+            }
+
+            if (len > n) {
+                isRunning = false;
+                document.getElementById('btnStep').disabled = true;
+                document.getElementById('statusBar').innerText = "Hoàn thành!";
+                highlight(null, null);
+                log("Thuật toán kết thúc.");
+            }
+        }
+
+        function reset() {
+            document.getElementById('visualizer').innerHTML = '';
+            document.getElementById('consoleLog').innerHTML = '> Waiting...';
+            document.getElementById('btnStep').disabled = true;
+            document.getElementById('statusBar').innerText = '';
+        }
+    </script>
+</body>
+</html>
