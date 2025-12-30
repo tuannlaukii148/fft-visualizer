@@ -6,6 +6,7 @@
 
 Dự án này là một triển khai thuật toán **Biến đổi Fourier nhanh (Fast Fourier Transform - FFT)** bằng ngôn ngữ C++. Chương trình sử dụng phương pháp **Cooley-Tukey** (Iterative) kết hợp với kỹ thuật **Bit-reversal permutation** để đạt hiệu suất tối ưu $O(N \log N)$.
 
+DEMO: https://tuannlaukii148.github.io/fft-visualizer/
 ---
 
 ## 🚀 Tính năng nổi bật
